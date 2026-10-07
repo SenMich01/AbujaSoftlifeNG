@@ -1,32 +1,606 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
-import {fileURLToPath} from 'url';
-import {createClient} from '@supabase/supabase-js';
-const app=express(),PORT=process.env.PORT||10000,__filename=fileURLToPath(import.meta.url),__dirname=path.dirname(__filename),dist=path.resolve(__dirname,'../../client/dist');
-app.use(cors());app.use(express.json());
-const hasDB=!!(process.env.SUPABASE_URL&&process.env.SUPABASE_ANON_KEY);const sb=hasDB?createClient(process.env.SUPABASE_URL,process.env.SUPABASE_ANON_KEY):null;
-const districts=[['gwarinpa','Gwarinpa',500,'Residential hustle'],['wuse','Wuse',700,'Shopping, offices and city energy'],['wuse2','Wuse 2',900,'Restaurants and nightlife'],['jabi','Jabi',800,'Leisure, food and Jabi Lake'],['garki','Garki',650,'Commercial Abuja'],['maitama','Maitama',1200,'Premium Abuja'],['asokoro','Asokoro',1100,'Quiet and premium'],['central','Central Area',750,'Business and government']].map(([id,name,transport,vibe])=>({id,name,transport,vibe}));
-const jobs=[['Job Seeker',0,0,0],['Sales Assistant',85000,22,2],['Customer Support Rep',120000,25,3],['Graphic Designer',170000,25,4],['Junior Developer',240000,28,5],['Data Analyst',300000,28,6],['Banking Analyst',350000,30,7],['Product Manager',500000,32,9]].map(([title,salary,energy,rep])=>({title,salary,energy,rep}));
-const housing=[['Shared Apartment',0,2],['Standard Apartment',120000,8],['Wuse Apartment',220000,12],['Maitama Apartment',450000,20],['Luxury Residence',900000,30]].map(([name,cost,happiness])=>({name,cost,happiness}));
-const clamp=n=>Math.max(0,Math.min(100,Math.round(n)));
-const user=async req=>{if(!sb)return null;const h=req.headers.authorization||'';if(!h.startsWith('Bearer '))return null;const {data}=await sb.auth.getUser(h.slice(7));return data.user||null};
-async function auth(req,res,next){req.user=await user(req);if(!req.user)return res.status(401).json({error:'Authentication required'});next()}
-app.get('/api/health',(req,res)=>res.json({ok:true,app:'AbujaSoftlifeNG',supabase:hasDB}));
-app.get('/api/game-data',(req,res)=>res.json({districts,jobs,housing}));
-app.get('/api/me',auth,async(req,res)=>{const {data:player,error}=await sb.from('players').select('*').eq('id',req.user.id).maybeSingle();if(error)return res.status(500).json({error:error.message});const {data:activity}=await sb.from('activity_log').select('*').eq('player_id',req.user.id).order('created_at',{ascending:false}).limit(30);res.json({player,activity:activity||[]})});
-app.post('/api/player',auth,async(req,res)=>{const p={id:req.user.id,display_name:String(req.body.displayName||'Player').slice(0,30),age:Number(req.body.age)||21,gender:req.body.gender||'Other',district:districts.some(x=>x.id===req.body.district)?req.body.district:'gwarinpa',money:50000,bank_balance:0,health:100,happiness:70,energy:100,reputation:10,job:'Job Seeker',job_salary:0,housing:'Shared Apartment',housing_cost:0};const {data,error}=await sb.from('players').upsert(p).select().single();if(error)return res.status(400).json({error:error.message});await sb.from('activity_log').insert({player_id:req.user.id,action:'Started life',details:'Entered Abuja and began a new story.'});res.json({player:data})});
-async function act(req,res,updates,action,amount=0,details=''){const {data,error}=await sb.from('players').update(updates).eq('id',req.user.id).select().single();if(error)return res.status(400).json({error:error.message});await sb.from('activity_log').insert({player_id:req.user.id,action,amount,details});res.json({player:data})}
-app.post('/api/action',auth,async(req,res)=>{const {data:p,error}=await sb.from('players').select('*').eq('id',req.user.id).single();if(error||!p)return res.status(404).json({error:'Create your character first'});const {type,value}=req.body;
-if(type==='rest')return act(req,res,{energy:clamp(p.energy+45),health:clamp(p.health+3),happiness:clamp(p.happiness+3)},'Rested',0,'Recovered energy.');
-if(type==='social'){if(p.energy<10)return res.status(400).json({error:'You need more energy'});return act(req,res,{energy:clamp(p.energy-10),happiness:clamp(p.happiness+12),reputation:clamp(p.reputation+3)},'Went social',0,'Met people and built reputation.');}
-if(type==='eat'){let c=3500;if(p.money<c)return res.status(400).json({error:'Not enough cash'});return act(req,res,{money:Number(p.money)-c,energy:clamp(p.energy+18),health:clamp(p.health+4),happiness:clamp(p.happiness+5)},'Ate out',-c,'Food and soft life.');}
-if(type==='work'){let j=jobs.find(x=>x.title===p.job);if(!j||!j.salary)return res.status(400).json({error:'Choose a job first'});if(p.energy<j.energy)return res.status(400).json({error:'Too tired. Rest first'});let pay=Math.round(j.salary/22);return act(req,res,{money:Number(p.money)+pay,energy:clamp(p.energy-j.energy),happiness:clamp(p.happiness-3),reputation:clamp(p.reputation+j.rep)},'Worked a shift',pay,`Worked as ${p.job}.`)}
-if(type==='travel'){let d=districts.find(x=>x.id===value);if(!d)return res.status(400).json({error:'Unknown district'});if(d.id===p.district)return res.status(400).json({error:'You are already here'});if(p.money<d.transport)return res.status(400).json({error:'Not enough cash for transport'});return act(req,res,{district:d.id,money:Number(p.money)-d.transport,energy:clamp(p.energy-5)},'Travelled',-d.transport,`Travelled to ${d.name}.`)}
-if(type==='job'){let j=jobs.find(x=>x.title===value);let reqRep=Math.max(0,jobs.findIndex(x=>x.title===value)*5);if(!j)return res.status(400).json({error:'Unknown job'});if(p.reputation<reqRep)return res.status(400).json({error:`You need ${reqRep} reputation`});return act(req,res,{job:j.title,job_salary:j.salary,happiness:clamp(p.happiness+3),reputation:clamp(p.reputation+2)},'Got a new job',0,`${j.title} — ₦${j.salary.toLocaleString()}/month.`)}
-if(type==='housing'){let h=housing.find(x=>x.name===value);if(!h)return res.status(400).json({error:'Unknown housing'});if(p.money<h.cost)return res.status(400).json({error:'You cannot afford this housing yet'});return act(req,res,{money:Number(p.money)-h.cost,housing:h.name,housing_cost:h.cost,happiness:clamp(p.happiness+h.happiness)},'Upgraded housing',-h.cost,`Moved into ${h.name}.`)}
-res.status(400).json({error:'Unknown action'})});
-app.get('/api/activity',auth,async(req,res)=>{const {data,error}=await sb.from('activity_log').select('*').eq('player_id',req.user.id).order('created_at',{ascending:false}).limit(30);if(error)return res.status(500).json({error:error.message});res.json({activity:data||[]})});
-if(process.env.NODE_ENV==='production'){app.use(express.static(dist));app.get('*',(req,res)=>req.path.startsWith('/api/')?res.status(404).json({error:'Not found'}):res.sendFile(path.join(dist,'index.html')))}
-app.listen(PORT,()=>console.log('AbujaSoftlifeNG listening on '+PORT));
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import { createClient } from "@supabase/supabase-js";
+
+dotenv.config();
+
+const app = express();
+
+const PORT = process.env.PORT || 10000;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const projectRoot = path.resolve(__dirname, "../..");
+const clientDist = path.join(projectRoot, "client", "dist");
+
+app.use(
+  cors({
+    origin: true,
+    credentials: true
+  })
+);
+
+app.use(express.json());
+
+/* ---------------------------------------
+   SUPABASE
+--------------------------------------- */
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+const supabase =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey)
+    : null;
+
+/* ---------------------------------------
+   GAME DATA
+--------------------------------------- */
+
+const districts = [
+  {
+    id: "gwarinpa",
+    name: "Gwarinpa",
+    description: "Busy residential life with affordable options.",
+    travelCost: 300
+  },
+  {
+    id: "wuse",
+    name: "Wuse",
+    description: "Commercial Abuja with plenty happening.",
+    travelCost: 500
+  },
+  {
+    id: "wuse-2",
+    name: "Wuse 2",
+    description: "Restaurants, nightlife and social activities.",
+    travelCost: 700
+  },
+  {
+    id: "jabi",
+    name: "Jabi",
+    description: "Shopping, entertainment and relaxed city life.",
+    travelCost: 600
+  },
+  {
+    id: "garki",
+    name: "Garki",
+    description: "Business district with plenty of work opportunities.",
+    travelCost: 500
+  },
+  {
+    id: "maitama",
+    name: "Maitama",
+    description: "Premium Abuja lifestyle.",
+    travelCost: 1000
+  },
+  {
+    id: "asokoro",
+    name: "Asokoro",
+    description: "Exclusive residential district.",
+    travelCost: 1000
+  },
+  {
+    id: "central-area",
+    name: "Central Area",
+    description: "The heart of Abuja's business district.",
+    travelCost: 700
+  }
+];
+
+const jobs = [
+  {
+    id: "job-seeker",
+    name: "Job Seeker",
+    salary: 0,
+    reputation: 0,
+    description: "Currently searching for opportunities."
+  },
+  {
+    id: "sales-assistant",
+    name: "Sales Assistant",
+    salary: 80000,
+    reputation: 0,
+    description: "Work in retail and improve your experience."
+  },
+  {
+    id: "customer-support",
+    name: "Customer Support Rep",
+    salary: 120000,
+    reputation: 10,
+    description: "Help customers and build professional reputation."
+  },
+  {
+    id: "graphic-designer",
+    name: "Graphic Designer",
+    salary: 150000,
+    reputation: 15,
+    description: "Create visual content for Abuja businesses."
+  },
+  {
+    id: "junior-developer",
+    name: "Junior Developer",
+    salary: 200000,
+    reputation: 20,
+    description: "Build software and digital products."
+  },
+  {
+    id: "data-analyst",
+    name: "Data Analyst",
+    salary: 250000,
+    reputation: 30,
+    description: "Turn business data into useful insights."
+  },
+  {
+    id: "banking-analyst",
+    name: "Banking Analyst",
+    salary: 300000,
+    reputation: 40,
+    description: "Analyse financial and banking information."
+  },
+  {
+    id: "product-manager",
+    name: "Product Manager",
+    salary: 400000,
+    reputation: 60,
+    description: "Lead digital products and teams."
+  }
+];
+
+const housing = [
+  {
+    id: "shared",
+    name: "Shared Apartment",
+    cost: 30000,
+    happiness: 5
+  },
+  {
+    id: "standard",
+    name: "Standard Apartment",
+    cost: 70000,
+    happiness: 10
+  },
+  {
+    id: "wuse",
+    name: "Wuse Apartment",
+    cost: 120000,
+    happiness: 18
+  },
+  {
+    id: "maitama",
+    name: "Maitama Apartment",
+    cost: 250000,
+    happiness: 30
+  },
+  {
+    id: "luxury",
+    name: "Luxury Residence",
+    cost: 500000,
+    happiness: 50
+  }
+];
+
+/* ---------------------------------------
+   HELPERS
+--------------------------------------- */
+
+function getAuthToken(req) {
+  const header = req.headers.authorization;
+
+  if (!header) return null;
+
+  if (!header.startsWith("Bearer ")) return null;
+
+  return header.replace("Bearer ", "");
+}
+
+async function getAuthenticatedUser(req) {
+  if (!supabase) return null;
+
+  const token = getAuthToken(req);
+
+  if (!token) return null;
+
+  const {
+    data: { user },
+    error
+  } = await supabase.auth.getUser(token);
+
+  if (error || !user) return null;
+
+  return user;
+}
+
+async function requireUser(req, res, next) {
+  if (!supabase) {
+    return res.status(503).json({
+      error: "Supabase is not configured."
+    });
+  }
+
+  const user = await getAuthenticatedUser(req);
+
+  if (!user) {
+    return res.status(401).json({
+      error: "Authentication required."
+    });
+  }
+
+  req.user = user;
+
+  next();
+}
+
+/* ---------------------------------------
+   HEALTH CHECK
+--------------------------------------- */
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    app: "AbujaSoftlifeNG",
+    supabase: Boolean(supabase)
+  });
+});
+
+/* ---------------------------------------
+   GAME DATA
+--------------------------------------- */
+
+app.get("/api/game-data", (req, res) => {
+  res.json({
+    districts,
+    jobs,
+    housing
+  });
+});
+
+/* ---------------------------------------
+   CURRENT PLAYER
+--------------------------------------- */
+
+app.get("/api/me", requireUser, async (req, res) => {
+  const { data, error } = await supabase
+    .from("players")
+    .select("*")
+    .eq("id", req.user.id)
+    .maybeSingle();
+
+  if (error) {
+    return res.status(500).json({
+      error: error.message
+    });
+  }
+
+  res.json({
+    user: req.user,
+    player: data
+  });
+});
+
+/* ---------------------------------------
+   CREATE / UPDATE PLAYER
+--------------------------------------- */
+
+app.post("/api/player", requireUser, async (req, res) => {
+  const {
+    display_name,
+    age = 18,
+    gender = "Prefer not to say"
+  } = req.body;
+
+  if (!display_name || display_name.trim().length < 2) {
+    return res.status(400).json({
+      error: "Display name must contain at least 2 characters."
+    });
+  }
+
+  const player = {
+    id: req.user.id,
+    display_name: display_name.trim(),
+    age: Number(age),
+    gender,
+    money: 100000,
+    bank_balance: 0,
+    health: 100,
+    happiness: 70,
+    energy: 100,
+    reputation: 0,
+    district: "gwarinpa",
+    job: "Job Seeker",
+    job_salary: 0,
+    housing: "Shared Apartment",
+    housing_cost: 30000
+  };
+
+  const { data, error } = await supabase
+    .from("players")
+    .upsert(player, {
+      onConflict: "id"
+    })
+    .select()
+    .single();
+
+  if (error) {
+    return res.status(500).json({
+      error: error.message
+    });
+  }
+
+  res.json({
+    player: data
+  });
+});
+
+/* ---------------------------------------
+   GAME ACTIONS
+--------------------------------------- */
+
+app.post("/api/action", requireUser, async (req, res) => {
+  const { action, district, jobId, housingId } = req.body;
+
+  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select("*")
+    .eq("id", req.user.id)
+    .single();
+
+  if (playerError || !player) {
+    return res.status(404).json({
+      error: "Player profile not found."
+    });
+  }
+
+  let update = {};
+  let amount = 0;
+  let details = "";
+
+  if (action === "rest") {
+    update = {
+      energy: Math.min(100, player.energy + 30),
+      health: Math.min(100, player.health + 5),
+      happiness: Math.min(100, player.happiness + 3)
+    };
+
+    details = "You rested and recovered some energy.";
+  }
+
+  else if (action === "eat") {
+    const cost = 2500;
+
+    if (player.money < cost) {
+      return res.status(400).json({
+        error: "Not enough money to eat."
+      });
+    }
+
+    amount = -cost;
+
+    update = {
+      money: player.money - cost,
+      energy: Math.min(100, player.energy + 10),
+      health: Math.min(100, player.health + 5),
+      happiness: Math.min(100, player.happiness + 4)
+    };
+
+    details = "You bought food and had a decent meal.";
+  }
+
+  else if (action === "social") {
+    const cost = 5000;
+
+    if (player.money < cost) {
+      return res.status(400).json({
+        error: "Not enough money for a social outing."
+      });
+    }
+
+    amount = -cost;
+
+    update = {
+      money: player.money - cost,
+      happiness: Math.min(100, player.happiness + 15),
+      energy: Math.max(0, player.energy - 10),
+      reputation: Math.min(100, player.reputation + 2)
+    };
+
+    details = "You went out and met people.";
+  }
+
+  else if (action === "work") {
+    if (player.job === "Job Seeker" || player.job_salary <= 0) {
+      return res.status(400).json({
+        error: "You need a job before you can work."
+      });
+    }
+
+    if (player.energy < 20) {
+      return res.status(400).json({
+        error: "You are too tired to work."
+      });
+    }
+
+    const earnings = Math.round(player.job_salary / 22);
+
+    amount = earnings;
+
+    update = {
+      money: player.money + earnings,
+      energy: Math.max(0, player.energy - 20),
+      reputation: Math.min(100, player.reputation + 1),
+      happiness: Math.max(0, player.happiness - 2)
+    };
+
+    details = `You worked and earned ₦${earnings.toLocaleString()}.`;
+  }
+
+  else if (action === "travel") {
+    const selectedDistrict = districts.find(
+      (item) => item.id === district
+    );
+
+    if (!selectedDistrict) {
+      return res.status(400).json({
+        error: "Invalid district."
+      });
+    }
+
+    const cost = selectedDistrict.travelCost;
+
+    if (player.money < cost) {
+      return res.status(400).json({
+        error: "Not enough money for transport."
+      });
+    }
+
+    amount = -cost;
+
+    update = {
+      money: player.money - cost,
+      district: selectedDistrict.id,
+      energy: Math.max(0, player.energy - 5)
+    };
+
+    details = `You travelled to ${selectedDistrict.name}.`;
+  }
+
+  else if (action === "job") {
+    const selectedJob = jobs.find(
+      (item) => item.id === jobId
+    );
+
+    if (!selectedJob) {
+      return res.status(400).json({
+        error: "Invalid job."
+      });
+    }
+
+    if (player.reputation < selectedJob.reputation) {
+      return res.status(400).json({
+        error: `You need ${selectedJob.reputation} reputation for this job.`
+      });
+    }
+
+    update = {
+      job: selectedJob.name,
+      job_salary: selectedJob.salary,
+      reputation: Math.min(100, player.reputation + 5)
+    };
+
+    details = `You became a ${selectedJob.name}.`;
+  }
+
+  else if (action === "housing") {
+    const selectedHousing = housing.find(
+      (item) => item.id === housingId
+    );
+
+    if (!selectedHousing) {
+      return res.status(400).json({
+        error: "Invalid housing option."
+      });
+    }
+
+    if (player.money < selectedHousing.cost) {
+      return res.status(400).json({
+        error: "You don't have enough money for this housing."
+      });
+    }
+
+    amount = -selectedHousing.cost;
+
+    update = {
+      money: player.money - selectedHousing.cost,
+      housing: selectedHousing.name,
+      housing_cost: selectedHousing.cost,
+      happiness: Math.min(
+        100,
+        player.happiness + selectedHousing.happiness
+      )
+    };
+
+    details = `You moved into ${selectedHousing.name}.`;
+  }
+
+  else {
+    return res.status(400).json({
+      error: "Unknown action."
+    });
+  }
+
+  const { data: updatedPlayer, error: updateError } =
+    await supabase
+      .from("players")
+      .update(update)
+      .eq("id", req.user.id)
+      .select()
+      .single();
+
+  if (updateError) {
+    return res.status(500).json({
+      error: updateError.message
+    });
+  }
+
+  await supabase.from("activity_log").insert({
+    player_id: req.user.id,
+    action,
+    amount,
+    details
+  });
+
+  res.json({
+    player: updatedPlayer,
+    message: details
+  });
+});
+
+/* ---------------------------------------
+   ACTIVITY
+--------------------------------------- */
+
+app.get("/api/activity", requireUser, async (req, res) => {
+  const { data, error } = await supabase
+    .from("activity_log")
+    .select("*")
+    .eq("player_id", req.user.id)
+    .order("created_at", {
+      ascending: false
+    })
+    .limit(20);
+
+  if (error) {
+    return res.status(500).json({
+      error: error.message
+    });
+  }
+
+  res.json({
+    activity: data
+  });
+});
+
+/* ---------------------------------------
+   SERVE REACT FRONTEND
+--------------------------------------- */
+
+app.use(express.static(clientDist));
+
+app.get("/{*splat}", (req, res) => {
+  res.sendFile(path.join(clientDist, "index.html"));
+});
+
+/* ---------------------------------------
+   START SERVER
+--------------------------------------- */
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(
+    `AbujaSoftlifeNG server running on port ${PORT}`
+  );
+});
