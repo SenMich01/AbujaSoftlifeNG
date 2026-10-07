@@ -1,4 +1,8 @@
-node_modules
-dist
+node_modules/
 .env
+.env.local
+client/.env
+client/.env.local
+client/dist/
 .DS_Store
+npm-debug.log*
