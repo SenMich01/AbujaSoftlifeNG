@@ -6,26 +6,16 @@ import React, {
 import { createRoot } from "react-dom/client";
 
 import {
-  ArrowLeft,
-  Banknote,
   BriefcaseBusiness,
-  Building2,
-  Car,
   ChevronRight,
   CircleDollarSign,
   Gamepad2,
   Heart,
-  Home,
   LogOut,
-  Map,
-  Menu,
   Moon,
-  Shirt,
   ShoppingBag,
-  Smile,
   Sparkles,
   User,
-  Wallet,
   X
 } from "lucide-react";
 
@@ -38,12 +28,15 @@ import "./styles.css";
 import GameWorld from "./GameWorld";
 
 
+/* =====================================================
+   SUPABASE
+===================================================== */
+
 const supabaseUrl =
   import.meta.env.VITE_SUPABASE_URL;
 
 const supabaseAnonKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY;
-
 
 const supabase =
   supabaseUrl && supabaseAnonKey
@@ -53,6 +46,10 @@ const supabase =
       )
     : null;
 
+
+/* =====================================================
+   DEMO DATA
+===================================================== */
 
 const demoPlayer = {
   id: "demo",
@@ -82,48 +79,23 @@ const demoCharacter = {
 };
 
 
-const districts = [
-  {
-    id: "gwarinpa",
-    name: "Gwarinpa"
-  },
-  {
-    id: "wuse",
-    name: "Wuse"
-  },
-  {
-    id: "wuse-2",
-    name: "Wuse 2"
-  },
-  {
-    id: "jabi",
-    name: "Jabi"
-  },
-  {
-    id: "garki",
-    name: "Garki"
-  },
-  {
-    id: "maitama",
-    name: "Maitama"
-  },
-  {
-    id: "asokoro",
-    name: "Asokoro"
-  },
-  {
-    id: "central-area",
-    name: "Central Area"
-  }
-];
-
+/* =====================================================
+   HELPERS
+===================================================== */
 
 function formatMoney(value) {
-  return `₦${Number(value || 0).toLocaleString()}`;
+  return `₦${Number(
+    value || 0
+  ).toLocaleString()}`;
 }
 
 
+/* =====================================================
+   APP
+===================================================== */
+
 function App() {
+
   const [session, setSession] =
     useState(null);
 
@@ -152,124 +124,301 @@ function App() {
     useState(false);
 
 
+  /* ===================================================
+     INITIALIZE
+  =================================================== */
+
   useEffect(() => {
-    initialize();
-  }, []);
+
+    let mounted = true;
+
+    async function start() {
+
+      if (!supabase) {
+
+        if (!mounted) return;
+
+        setDemoMode(true);
+        setPlayer(demoPlayer);
+        setCharacter(demoCharacter);
+        setLoading(false);
+
+        return;
+      }
 
 
-  async function initialize() {
+      try {
+
+        const {
+          data,
+          error
+        } =
+          await supabase.auth.getSession();
+
+
+        if (error) {
+          console.error(error);
+        }
+
+
+        if (
+          data &&
+          data.session &&
+          mounted
+        ) {
+
+          setSession(
+            data.session
+          );
+
+          await loadPlayer(
+            data.session.access_token
+          );
+        }
+
+      } catch (error) {
+
+        console.error(
+          "Initialization error:",
+          error
+        );
+
+      } finally {
+
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+
+    start();
+
+
     if (!supabase) {
-      setDemoMode(true);
-      setPlayer(demoPlayer);
-      setCharacter(demoCharacter);
-      setLoading(false);
-      return;
+      return undefined;
     }
-
-
-    const {
-      data
-    } = await supabase.auth.getSession();
-
-
-    if (data.session) {
-      setSession(data.session);
-
-      await loadPlayer(
-        data.session.access_token
-      );
-    }
-
-
-    setLoading(false);
 
 
     const {
       data: authListener
     } =
       supabase.auth.onAuthStateChange(
-        async (_event, newSession) => {
-          setSession(newSession);
+        (_event, newSession) => {
 
-          if (newSession) {
-            await loadPlayer(
-              newSession.access_token
-            );
-          } else {
+          if (!mounted) return;
+
+
+          setSession(
+            newSession
+          );
+
+
+          if (!newSession) {
+
             setPlayer(null);
             setCharacter(null);
+            setNeedsCharacter(false);
+            setDemoMode(false);
+
+            return;
           }
+
+
+          /*
+             Do not await async work directly inside
+             Supabase's auth callback.
+
+             Schedule it after the callback finishes.
+          */
+
+          setTimeout(() => {
+
+            loadPlayer(
+              newSession.access_token
+            );
+
+          }, 0);
         }
       );
 
 
     return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }
 
+      mounted = false;
+
+      authListener.subscription.unsubscribe();
+
+    };
+
+  }, []);
+
+
+  /* ===================================================
+     LOAD PLAYER
+  =================================================== */
 
   async function loadPlayer(token) {
+
+    if (!token) {
+      return;
+    }
+
+
     try {
+
+      setMessage("");
+
+
       const response =
-        await fetch("/api/me", {
-          headers: {
-            Authorization:
-              `Bearer ${token}`
+        await fetch(
+          "/api/me",
+          {
+            headers: {
+              Authorization:
+                `Bearer ${token}`
+            }
           }
-        });
+        );
 
 
       const data =
         await response.json();
 
 
+      /*
+         API returned an error.
+      */
+
+      if (!response.ok) {
+
+        throw new Error(
+          data.error ||
+          "Unable to load your player."
+        );
+      }
+
+
+      /*
+         Existing player.
+      */
+
       if (data.player) {
-        setPlayer(data.player);
+
+        setPlayer(
+          data.player
+        );
+
+        setNeedsCharacter(false);
+
 
         await loadCharacter(
           data.player.id
         );
-      } else {
-        setNeedsCharacter(true);
+
+        return;
       }
+
+
+      /*
+         No player exists yet.
+
+         This is a NEW authenticated user.
+         Show the character creator.
+      */
+
+      setPlayer(null);
+      setCharacter(null);
+      setNeedsCharacter(true);
+
     } catch (error) {
-      console.error(error);
+
+      console.error(
+        "loadPlayer error:",
+        error
+      );
+
 
       setMessage(
+        error.message ||
         "Unable to load your player."
       );
     }
   }
 
 
-  async function loadCharacter(playerId) {
-    if (!supabase) return;
+  /* ===================================================
+     LOAD CHARACTER
+  =================================================== */
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("characters")
-      .select("*")
-      .eq("player_id", playerId)
-      .maybeSingle();
+  async function loadCharacter(
+    playerId
+  ) {
 
-
-    if (error) {
-      console.error(error);
+    if (!supabase || !playerId) {
       return;
     }
 
 
-    if (data) {
-      setCharacter(data);
-      setNeedsCharacter(false);
-    } else {
+    try {
+
+      const {
+        data,
+        error
+      } =
+        await supabase
+          .from("characters")
+          .select("*")
+          .eq(
+            "player_id",
+            playerId
+          )
+          .maybeSingle();
+
+
+      if (error) {
+
+        console.error(
+          "Character loading error:",
+          error
+        );
+
+        /*
+           If the characters table does not exist,
+           don't completely break the game.
+        */
+
+        setNeedsCharacter(true);
+
+        return;
+      }
+
+
+      if (data) {
+
+        setCharacter(data);
+        setNeedsCharacter(false);
+
+      } else {
+
+        setCharacter(null);
+        setNeedsCharacter(true);
+      }
+
+    } catch (error) {
+
+      console.error(
+        error
+      );
+
       setNeedsCharacter(true);
     }
   }
 
+
+  /* ===================================================
+     CREATE PLAYER + CHARACTER
+  =================================================== */
 
   async function createPlayerAndCharacter({
     displayName,
@@ -277,31 +426,91 @@ function App() {
     gender,
     characterData
   }) {
-    if (!session) return;
-
 
     try {
+
+      /*
+         Always get the current Supabase session
+         directly instead of relying only on React state.
+      */
+
+      if (!supabase) {
+
+        throw new Error(
+          "Supabase is not configured."
+        );
+      }
+
+
+      const {
+        data: sessionData,
+        error: sessionError
+      } =
+        await supabase.auth.getSession();
+
+
+      if (sessionError) {
+        throw sessionError;
+      }
+
+
+      const currentSession =
+        sessionData.session;
+
+
+      if (!currentSession) {
+
+        throw new Error(
+          "Your login session has expired. Please log in again."
+        );
+      }
+
+
+      /*
+         Keep React state synchronized.
+      */
+
+      setSession(
+        currentSession
+      );
+
+
+      setMessage(
+        "Creating your Abuja life..."
+      );
+
+
+      /*
+         Create the player.
+      */
+
       const response =
-        await fetch("/api/player", {
-          method: "POST",
+        await fetch(
+          "/api/player",
+          {
+            method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json",
+            headers: {
+              "Content-Type":
+                "application/json",
 
-            Authorization:
-              `Bearer ${session.access_token}`
-          },
+              Authorization:
+                `Bearer ${currentSession.access_token}`
+            },
 
-          body: JSON.stringify({
-            display_name:
-              displayName,
+            body: JSON.stringify({
 
-            age: Number(age),
+              display_name:
+                displayName.trim(),
 
-            gender
-          })
-        });
+              age:
+                Number(age),
+
+              gender
+
+            })
+          }
+        );
 
 
       const result =
@@ -309,62 +518,154 @@ function App() {
 
 
       if (!response.ok) {
+
         throw new Error(
           result.error ||
-          "Could not create player."
+          "Could not create your player."
         );
       }
 
 
-      setPlayer(result.player);
+      if (!result.player) {
 
-
-      const {
-        data,
-        error
-      } = await supabase
-        .from("characters")
-        .upsert(
-          {
-            player_id:
-              session.user.id,
-
-            ...characterData
-          },
-          {
-            onConflict:
-              "player_id"
-          }
-        )
-        .select()
-        .single();
-
-
-      if (error) {
-        throw error;
+        throw new Error(
+          "The server did not return your player."
+        );
       }
 
 
-      setCharacter(data);
-      setNeedsCharacter(false);
+      /*
+         Save player in React.
+      */
 
-      setMessage(
-        "Welcome to AbujaSoftlifeNG."
+      setPlayer(
+        result.player
       );
-    } catch (error) {
-      console.error(error);
+
+
+      /*
+         Create the character.
+
+         IMPORTANT:
+         player_id must match the authenticated
+         user's player ID if your schema uses
+         player.id, not auth.uid().
+      */
+
+      const playerId =
+        result.player.id;
+
+
+      const {
+        data: newCharacter,
+        error: characterError
+      } =
+        await supabase
+          .from("characters")
+          .upsert(
+            {
+              player_id:
+                playerId,
+
+              skin_color:
+                characterData.skin_color,
+
+              hair_style:
+                characterData.hair_style,
+
+              hair_color:
+                characterData.hair_color,
+
+              outfit:
+                characterData.outfit,
+
+              shoes:
+                characterData.shoes
+            },
+            {
+              onConflict:
+                "player_id"
+            }
+          )
+          .select()
+          .single();
+
+
+      if (characterError) {
+
+        console.error(
+          "Character creation error:",
+          characterError
+        );
+
+        throw new Error(
+          `Character could not be saved: ${characterError.message}`
+        );
+      }
+
+
+      /*
+         Save character.
+      */
+
+      setCharacter(
+        newCharacter
+      );
+
+
+      setNeedsCharacter(
+        false
+      );
+
+
+      /*
+         Open the actual game.
+      */
+
+      setScreen(
+        "game"
+      );
+
 
       setMessage(
-        error.message
+        `Welcome to Abuja, ${displayName}!`
+      );
+
+    } catch (error) {
+
+      console.error(
+        "createPlayerAndCharacter error:",
+        error
+      );
+
+
+      setMessage(
+        error.message ||
+        "Something went wrong while creating your character."
       );
     }
   }
 
 
+  /* ===================================================
+     SAVE CHARACTER
+  =================================================== */
+
   async function saveCharacter(
     updates
   ) {
+
+    if (!character) {
+      return;
+    }
+
+
+    /*
+       Demo mode.
+    */
+
     if (demoMode) {
+
       setCharacter({
         ...character,
         ...updates
@@ -374,57 +675,117 @@ function App() {
     }
 
 
-    const {
-      data,
-      error
-    } = await supabase
-      .from("characters")
-      .update(updates)
-      .eq(
-        "player_id",
-        session.user.id
-      )
-      .select()
-      .single();
+    if (!supabase || !session) {
 
+      setMessage(
+        "You are not logged in."
+      );
 
-    if (error) {
-      setMessage(error.message);
       return;
     }
 
 
-    setCharacter(data);
+    try {
+
+      const {
+        data,
+        error
+      } =
+        await supabase
+          .from("characters")
+          .update(updates)
+          .eq(
+            "player_id",
+            player.id
+          )
+          .select()
+          .single();
+
+
+      if (error) {
+
+        setMessage(
+          error.message
+        );
+
+        return;
+      }
+
+
+      setCharacter(
+        data
+      );
+
+    } catch (error) {
+
+      console.error(error);
+
+      setMessage(
+        "Unable to save character."
+      );
+    }
   }
 
+
+  /* ===================================================
+     GAME ACTION
+  =================================================== */
 
   async function performAction(
     payload
   ) {
-    if (demoMode) {
-      demoAction(payload);
+
+    if (!player) {
       return;
     }
 
 
-    if (!session) return;
+    /*
+       Demo mode.
+    */
+
+    if (demoMode) {
+
+      demoAction(
+        payload
+      );
+
+      return;
+    }
+
+
+    if (!session) {
+
+      setMessage(
+        "Please log in again."
+      );
+
+      return;
+    }
 
 
     try {
+
       const response =
-        await fetch("/api/action", {
-          method: "POST",
+        await fetch(
+          "/api/action",
+          {
+            method: "POST",
 
-          headers: {
-            "Content-Type":
-              "application/json",
+            headers: {
+              "Content-Type":
+                "application/json",
 
-            Authorization:
-              `Bearer ${session.access_token}`
-          },
+              Authorization:
+                `Bearer ${session.access_token}`
+            },
 
-          body: JSON.stringify(payload)
-        });
+            body:
+              JSON.stringify(
+                payload
+              )
+          }
+        );
 
 
       const data =
@@ -432,6 +793,7 @@ function App() {
 
 
       if (!response.ok) {
+
         setMessage(
           data.error ||
           "Action failed."
@@ -441,12 +803,19 @@ function App() {
       }
 
 
-      setPlayer(data.player);
+      setPlayer(
+        data.player
+      );
+
 
       setMessage(
         data.message
       );
-    } catch {
+
+    } catch (error) {
+
+      console.error(error);
+
       setMessage(
         "Unable to complete action."
       );
@@ -454,7 +823,19 @@ function App() {
   }
 
 
-  function demoAction(payload) {
+  /* ===================================================
+     DEMO ACTIONS
+  =================================================== */
+
+  function demoAction(
+    payload
+  ) {
+
+    if (!player) {
+      return;
+    }
+
+
     let next = {
       ...player
     };
@@ -464,6 +845,7 @@ function App() {
       payload.action ===
       "rest"
     ) {
+
       next.energy =
         Math.min(
           100,
@@ -492,7 +874,12 @@ function App() {
       payload.action ===
       "eat"
     ) {
-      if (next.money < 2500) {
+
+      if (
+        next.money <
+        2500
+      ) {
+
         setMessage(
           "Not enough money."
         );
@@ -501,7 +888,9 @@ function App() {
       }
 
 
-      next.money -= 2500;
+      next.money -=
+        2500;
+
 
       next.energy =
         Math.min(
@@ -509,11 +898,13 @@ function App() {
           next.energy + 10
         );
 
+
       next.happiness =
         Math.min(
           100,
           next.happiness + 4
         );
+
 
       setMessage(
         "You had a meal."
@@ -525,7 +916,12 @@ function App() {
       payload.action ===
       "social"
     ) {
-      if (next.money < 5000) {
+
+      if (
+        next.money <
+        5000
+      ) {
+
         setMessage(
           "Not enough money."
         );
@@ -534,7 +930,9 @@ function App() {
       }
 
 
-      next.money -= 5000;
+      next.money -=
+        5000;
+
 
       next.happiness =
         Math.min(
@@ -542,11 +940,13 @@ function App() {
           next.happiness + 15
         );
 
+
       next.reputation =
         Math.min(
           100,
           next.reputation + 2
         );
+
 
       setMessage(
         "You went out."
@@ -558,7 +958,11 @@ function App() {
       payload.action ===
       "work"
     ) {
-      if (!next.job_salary) {
+
+      if (
+        !next.job_salary
+      ) {
+
         setMessage(
           "Get a job first."
         );
@@ -569,11 +973,14 @@ function App() {
 
       const earnings =
         Math.round(
-          next.job_salary / 22
+          next.job_salary /
+          22
         );
 
 
-      next.money += earnings;
+      next.money +=
+        earnings;
+
 
       next.energy =
         Math.max(
@@ -597,25 +1004,55 @@ function App() {
     }
 
 
-    setPlayer(next);
+    setPlayer(
+      next
+    );
   }
 
 
+  /* ===================================================
+     LOGOUT
+  =================================================== */
+
   async function logout() {
-    if (supabase) {
-      await supabase.auth.signOut();
+
+    try {
+
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+
+    } catch (error) {
+
+      console.error(
+        "Logout error:",
+        error
+      );
     }
+
 
     setSession(null);
     setPlayer(null);
     setCharacter(null);
+    setNeedsCharacter(false);
+    setDemoMode(false);
+    setScreen("game");
+    setMessage("");
   }
 
 
+  /* ===================================================
+     LOADING SCREEN
+  =================================================== */
+
   if (loading) {
+
     return (
       <div className="loading">
-        <Gamepad2 size={42} />
+
+        <Gamepad2
+          size={42}
+        />
 
         <h1>
           AbujaSoftlifeNG
@@ -624,33 +1061,80 @@ function App() {
         <p>
           Building your Abuja...
         </p>
+
       </div>
     );
   }
 
 
+  /* ===================================================
+     AUTH SCREEN
+
+     IMPORTANT FIX:
+     A logged-in user who has no player must NOT
+     be sent back to login.
+  =================================================== */
+
   if (
+    !session &&
     !player &&
     !demoMode
   ) {
+
     return (
       <AuthScreen
-        authMode={authMode}
+
+        authMode={
+          authMode
+        }
+
         setAuthMode={
           setAuthMode
         }
-        message={message}
+
+        message={
+          message
+        }
+
         setMessage={
           setMessage
         }
 
+        onLoginSuccess={
+          async (
+            newSession
+          ) => {
+
+            setSession(
+              newSession
+            );
+
+            await loadPlayer(
+              newSession.access_token
+            );
+          }
+        }
+
         onDemo={() => {
-          setDemoMode(true);
+
+          setDemoMode(
+            true
+          );
+
           setPlayer(
             demoPlayer
           );
+
           setCharacter(
             demoCharacter
+          );
+
+          setNeedsCharacter(
+            false
+          );
+
+          setScreen(
+            "game"
           );
         }}
       />
@@ -658,14 +1142,29 @@ function App() {
   }
 
 
+  /* ===================================================
+     CHARACTER CREATOR
+
+     IMPORTANT FIX:
+     We check session, NOT player.
+
+     A new user is authenticated but doesn't have
+     a player yet.
+  =================================================== */
+
   if (
-    player &&
+    session &&
     needsCharacter &&
     !demoMode
   ) {
+
     return (
       <CharacterCreator
-        message={message}
+
+        message={
+          message
+        }
+
         onCreate={
           createPlayerAndCharacter
         }
@@ -674,11 +1173,45 @@ function App() {
   }
 
 
+  /* ===================================================
+     SAFETY FALLBACK
+  =================================================== */
+
+  if (!player) {
+
+    return (
+      <div className="loading">
+
+        <Gamepad2
+          size={42}
+        />
+
+        <h1>
+          AbujaSoftlifeNG
+        </h1>
+
+        <p>
+          Preparing your game...
+        </p>
+
+      </div>
+    );
+  }
+
+
+  /* ===================================================
+     GAME
+  =================================================== */
+
   return (
     <div className="game-app">
 
       <GameWorld
-        player={player}
+
+        player={
+          player
+        }
+
         character={
           character ||
           demoCharacter
@@ -699,22 +1232,36 @@ function App() {
 
 
       <GameHUD
-        player={player}
+
+        player={
+          player
+        }
+
         character={
           character ||
           demoCharacter
         }
 
-        screen={screen}
-        setScreen={setScreen}
+        screen={
+          screen
+        }
+
+        setScreen={
+          setScreen
+        }
 
         onAction={
           performAction
         }
 
-        logout={logout}
+        logout={
+          logout
+        }
 
-        message={message}
+        message={
+          message
+        }
+
         setMessage={
           setMessage
         }
@@ -722,7 +1269,9 @@ function App() {
 
 
       {screen === "character" && (
+
         <CharacterPanel
+
           character={
             character ||
             demoCharacter
@@ -733,36 +1282,47 @@ function App() {
           }
 
           onClose={() =>
-            setScreen("game")
+            setScreen(
+              "game"
+            )
           }
         />
       )}
 
 
       {screen === "actions" && (
+
         <ActionPanel
-          player={player}
+
+          player={
+            player
+          }
+
           onAction={
             performAction
           }
 
           onClose={() =>
-            setScreen("game")
+            setScreen(
+              "game"
+            )
           }
         />
       )}
 
 
       {screen === "profile" && (
+
         <ProfilePanel
-          player={player}
-          character={
-            character ||
-            demoCharacter
+
+          player={
+            player
           }
 
           onClose={() =>
-            setScreen("game")
+            setScreen(
+              "game"
+            )
           }
         />
       )}
@@ -772,17 +1332,19 @@ function App() {
 }
 
 
-/* ----------------------------------------
-   AUTH
----------------------------------------- */
+/* =====================================================
+   AUTH SCREEN
+===================================================== */
 
 function AuthScreen({
   authMode,
   setAuthMode,
   message,
   setMessage,
-  onDemo
+  onDemo,
+  onLoginSuccess
 }) {
+
   const [email, setEmail] =
     useState("");
 
@@ -794,6 +1356,7 @@ function AuthScreen({
 
 
   async function submit(e) {
+
     e.preventDefault();
 
     setLoading(true);
@@ -801,47 +1364,150 @@ function AuthScreen({
 
 
     try {
-      if (authMode === "login") {
+
+      if (!supabase) {
+
+        throw new Error(
+          "Supabase is not configured."
+        );
+      }
+
+
+      /* ===============================================
+         LOGIN
+      =============================================== */
+
+      if (
+        authMode ===
+        "login"
+      ) {
+
         const {
+          data,
           error
         } =
           await supabase.auth
             .signInWithPassword({
-              email,
+
+              email:
+                email.trim(),
+
               password
+
             });
 
 
-        if (error) throw error;
-      } else {
+        if (error) {
+          throw error;
+        }
+
+
+        if (
+          !data ||
+          !data.session
+        ) {
+
+          throw new Error(
+            "Login succeeded, but no session was created."
+          );
+        }
+
+
+        setMessage(
+          "Login successful. Entering Abuja..."
+        );
+
+
+        /*
+           Immediately load the player's account.
+
+           This is what fixes the old problem where
+           pressing Enter Abuja appeared to do nothing.
+        */
+
+        await onLoginSuccess(
+          data.session
+        );
+
+      }
+
+
+      /* ===============================================
+         SIGN UP
+      =============================================== */
+
+      else {
+
         const {
           data,
           error
         } =
           await supabase.auth
             .signUp({
-              email,
-              password
+
+              email:
+                email.trim(),
+
+              password,
+
+              options: {
+
+                emailRedirectTo:
+                  window.location.origin
+
+              }
+
             });
 
 
-        if (error) throw error;
+        if (error) {
+          throw error;
+        }
 
 
-        if (!data.session) {
+        /*
+           If email confirmation is disabled,
+           Supabase gives us a session immediately.
+        */
+
+        if (
+          data &&
+          data.session
+        ) {
+
+          await onLoginSuccess(
+            data.session
+          );
+
+        } else {
+
+          /*
+             Email confirmation is enabled.
+          */
+
           setMessage(
-            "Account created. Check your email to verify your account."
+            "Account created! Check your email and click Confirm Email before logging in."
           );
         }
       }
+
     } catch (error) {
-      setMessage(
-        error.message
+
+      console.error(
+        "Authentication error:",
+        error
       );
+
+
+      setMessage(
+        error.message ||
+        "Authentication failed."
+      );
+
+    } finally {
+
+      setLoading(false);
     }
-
-
-    setLoading(false);
   }
 
 
@@ -851,16 +1517,23 @@ function AuthScreen({
       <div className="auth-card">
 
         <div className="auth-logo">
-          <Gamepad2 size={32} />
+
+          <Gamepad2
+            size={32}
+          />
+
         </div>
+
 
         <p className="eyebrow">
           ABUJA IS YOURS
         </p>
 
+
         <h1>
           AbujaSoftlifeNG
         </h1>
+
 
         <p className="auth-description">
           Work. Make money. Build your
@@ -868,15 +1541,22 @@ function AuthScreen({
         </p>
 
 
-        <form onSubmit={submit}>
+        <form
+          onSubmit={
+            submit
+          }
+        >
 
           <label>
+
             Email
 
             <input
               type="email"
               placeholder="you@example.com"
-              value={email}
+              value={
+                email
+              }
               onChange={(e) =>
                 setEmail(
                   e.target.value
@@ -884,16 +1564,20 @@ function AuthScreen({
               }
               required
             />
+
           </label>
 
 
           <label>
+
             Password
 
             <input
               type="password"
               placeholder="••••••••"
-              value={password}
+              value={
+                password
+              }
               onChange={(e) =>
                 setPassword(
                   e.target.value
@@ -902,43 +1586,57 @@ function AuthScreen({
               minLength={6}
               required
             />
+
           </label>
 
 
           {message && (
+
             <div className="notice">
               {message}
             </div>
+
           )}
 
 
           <button
+            type="submit"
             className="primary-button"
-            disabled={loading}
+            disabled={
+              loading
+            }
           >
+
             {loading
               ? "Please wait..."
-              : authMode === "login"
+              : authMode ===
+                "login"
               ? "Enter Abuja"
               : "Create Account"}
+
           </button>
 
         </form>
 
 
         <button
+          type="button"
           className="text-button"
           onClick={() =>
             setAuthMode(
-              authMode === "login"
+              authMode ===
+                "login"
                 ? "signup"
                 : "login"
             )
           }
         >
-          {authMode === "login"
+
+          {authMode ===
+          "login"
             ? "Create an account"
             : "Already have an account? Log in"}
+
         </button>
 
 
@@ -948,8 +1646,11 @@ function AuthScreen({
 
 
         <button
+          type="button"
           className="secondary-button"
-          onClick={onDemo}
+          onClick={
+            onDemo
+          }
         >
           Play Demo
         </button>
@@ -961,14 +1662,15 @@ function AuthScreen({
 }
 
 
-/* ----------------------------------------
+/* =====================================================
    CHARACTER CREATOR
----------------------------------------- */
+===================================================== */
 
 function CharacterCreator({
   onCreate,
   message
 }) {
+
   const [name, setName] =
     useState("");
 
@@ -976,7 +1678,9 @@ function CharacterCreator({
     useState(21);
 
   const [gender, setGender] =
-    useState("Prefer not to say");
+    useState(
+      "Prefer not to say"
+    );
 
   const [skin, setSkin] =
     useState("#8D5524");
@@ -994,38 +1698,101 @@ function CharacterCreator({
     useState("sneakers");
 
 
+  function handleCreate() {
+
+    if (
+      name.trim().length <
+      2
+    ) {
+      return;
+    }
+
+
+    onCreate({
+
+      displayName:
+        name.trim(),
+
+      age:
+        Number(age),
+
+      gender,
+
+      characterData: {
+
+        skin_color:
+          skin,
+
+        hair_style:
+          hair,
+
+        hair_color:
+          hairColor,
+
+        outfit,
+
+        shoes
+
+      }
+
+    });
+  }
+
+
   return (
     <div className="creator-page">
 
       <div className="creator-card">
 
+
+        {/* ===========================================
+            CHARACTER PREVIEW
+        =========================================== */}
+
         <div className="creator-preview">
 
           <div className="preview-floor" />
 
+
           <div
             className="preview-person"
             style={{
-              "--skin": skin,
-              "--hair": hairColor
+              "--skin":
+                skin,
+
+              "--hair":
+                hairColor
             }}
           >
+
             <div className="preview-head">
+
               <div className="preview-hair" />
+
             </div>
+
 
             <div
               className={`preview-body ${outfit}`}
             />
 
+
             <div className="preview-legs">
+
               <span />
+
               <span />
+
             </div>
+
           </div>
 
         </div>
 
+
+        {/* ===========================================
+            CHARACTER CONTROLS
+        =========================================== */}
 
         <div className="creator-controls">
 
@@ -1033,9 +1800,11 @@ function CharacterCreator({
             YOUR ABUJA LIFE
           </p>
 
+
           <h1>
             Create Your Character
           </h1>
+
 
           <p className="muted">
             This character will represent you
@@ -1044,10 +1813,14 @@ function CharacterCreator({
 
 
           <label>
+
             Character name
 
             <input
-              value={name}
+              value={
+                name
+              }
+
               onChange={(e) =>
                 setName(
                   e.target.value
@@ -1055,40 +1828,53 @@ function CharacterCreator({
               }
 
               placeholder="e.g. Senayon"
+
+              maxLength={30}
             />
+
           </label>
 
 
           <div className="two-columns">
 
             <label>
+
               Age
 
               <input
                 type="number"
                 min="13"
                 max="100"
-                value={age}
+                value={
+                  age
+                }
+
                 onChange={(e) =>
                   setAge(
                     e.target.value
                   )
                 }
               />
+
             </label>
 
 
             <label>
+
               Gender
 
               <select
-                value={gender}
+                value={
+                  gender
+                }
+
                 onChange={(e) =>
                   setGender(
                     e.target.value
                   )
                 }
               >
+
                 <option>
                   Prefer not to say
                 </option>
@@ -1100,14 +1886,18 @@ function CharacterCreator({
                 <option>
                   Female
                 </option>
+
               </select>
+
             </label>
 
           </div>
 
 
           <Customizer
+
             label="Skin"
+
             values={[
               "#4A2511",
               "#6B3517",
@@ -1116,13 +1906,21 @@ function CharacterCreator({
               "#C58B5B",
               "#E0A778"
             ]}
-            selected={skin}
-            onChange={setSkin}
+
+            selected={
+              skin
+            }
+
+            onChange={
+              setSkin
+            }
           />
 
 
           <Customizer
+
             label="Hair colour"
+
             values={[
               "#171717",
               "#3B2416",
@@ -1130,8 +1928,14 @@ function CharacterCreator({
               "#D4A017",
               "#9CA3AF"
             ]}
-            selected={hairColor}
-            onChange={setHairColor}
+
+            selected={
+              hairColor
+            }
+
+            onChange={
+              setHairColor
+            }
           />
 
 
@@ -1141,6 +1945,7 @@ function CharacterCreator({
               Hair style
             </span>
 
+
             <div className="choice-row">
 
               {[
@@ -1148,22 +1953,33 @@ function CharacterCreator({
                 "fade",
                 "afro",
                 "long"
-              ].map((item) => (
-                <button
-                  key={item}
-                  className={
-                    hair === item
-                      ? "choice active"
-                      : "choice"
-                  }
+              ].map(
+                (item) => (
 
-                  onClick={() =>
-                    setHair(item)
-                  }
-                >
-                  {item}
-                </button>
-              ))}
+                  <button
+                    type="button"
+                    key={
+                      item
+                    }
+
+                    className={
+                      hair ===
+                      item
+                        ? "choice active"
+                        : "choice"
+                    }
+
+                    onClick={() =>
+                      setHair(
+                        item
+                      )
+                    }
+                  >
+                    {item}
+                  </button>
+
+                )
+              )}
 
             </div>
 
@@ -1176,28 +1992,40 @@ function CharacterCreator({
               Outfit
             </span>
 
+
             <div className="choice-row">
 
               {[
                 "casual",
                 "corporate",
                 "street"
-              ].map((item) => (
-                <button
-                  key={item}
-                  className={
-                    outfit === item
-                      ? "choice active"
-                      : "choice"
-                  }
+              ].map(
+                (item) => (
 
-                  onClick={() =>
-                    setOutfit(item)
-                  }
-                >
-                  {item}
-                </button>
-              ))}
+                  <button
+                    type="button"
+                    key={
+                      item
+                    }
+
+                    className={
+                      outfit ===
+                      item
+                        ? "choice active"
+                        : "choice"
+                    }
+
+                    onClick={() =>
+                      setOutfit(
+                        item
+                      )
+                    }
+                  >
+                    {item}
+                  </button>
+
+                )
+              )}
 
             </div>
 
@@ -1210,28 +2038,40 @@ function CharacterCreator({
               Shoes
             </span>
 
+
             <div className="choice-row">
 
               {[
                 "sneakers",
                 "slides",
                 "loafers"
-              ].map((item) => (
-                <button
-                  key={item}
-                  className={
-                    shoes === item
-                      ? "choice active"
-                      : "choice"
-                  }
+              ].map(
+                (item) => (
 
-                  onClick={() =>
-                    setShoes(item)
-                  }
-                >
-                  {item}
-                </button>
-              ))}
+                  <button
+                    type="button"
+                    key={
+                      item
+                    }
+
+                    className={
+                      shoes ===
+                      item
+                        ? "choice active"
+                        : "choice"
+                    }
+
+                    onClick={() =>
+                      setShoes(
+                        item
+                      )
+                    }
+                  >
+                    {item}
+                  </button>
+
+                )
+              )}
 
             </div>
 
@@ -1239,40 +2079,33 @@ function CharacterCreator({
 
 
           {message && (
+
             <div className="notice">
               {message}
             </div>
+
           )}
 
 
           <button
+            type="button"
             className="primary-button"
             disabled={
-              name.trim().length < 2
+              name.trim().length <
+              2
             }
 
-            onClick={() =>
-              onCreate({
-                displayName:
-                  name.trim(),
-
-                age,
-
-                gender,
-
-                characterData: {
-                  skin_color: skin,
-                  hair_style: hair,
-                  hair_color:
-                    hairColor,
-                  outfit,
-                  shoes
-                }
-              })
+            onClick={
+              handleCreate
             }
           >
+
             Enter Abuja
-            <ChevronRight size={18} />
+
+            <ChevronRight
+              size={18}
+            />
+
           </button>
 
         </div>
@@ -1284,12 +2117,17 @@ function CharacterCreator({
 }
 
 
+/* =====================================================
+   COLOR CUSTOMIZER
+===================================================== */
+
 function Customizer({
   label,
   values,
   selected,
   onChange
 }) {
+
   return (
     <div className="choice-section">
 
@@ -1297,26 +2135,43 @@ function Customizer({
         {label}
       </span>
 
+
       <div className="color-row">
 
-        {values.map((color) => (
-          <button
-            key={color}
-            className={
-              selected === color
-                ? "color-choice selected"
-                : "color-choice"
-            }
+        {values.map(
+          (color) => (
 
-            style={{
-              background: color
-            }}
+            <button
+              type="button"
+              key={
+                color
+              }
 
-            onClick={() =>
-              onChange(color)
-            }
-          />
-        ))}
+              aria-label={
+                `${label} ${color}`
+              }
+
+              className={
+                selected ===
+                color
+                  ? "color-choice selected"
+                  : "color-choice"
+              }
+
+              style={{
+                background:
+                  color
+              }}
+
+              onClick={() =>
+                onChange(
+                  color
+                )
+              }
+            />
+
+          )
+        )}
 
       </div>
 
@@ -1325,9 +2180,9 @@ function Customizer({
 }
 
 
-/* ----------------------------------------
-   HUD
----------------------------------------- */
+/* =====================================================
+   GAME HUD
+===================================================== */
 
 function GameHUD({
   player,
@@ -1339,16 +2194,25 @@ function GameHUD({
   message,
   setMessage
 }) {
+
   return (
     <>
+
       <div className="game-top">
 
         <div className="game-brand">
+
           <div className="brand-mini">
-            <Gamepad2 size={18} />
+
+            <Gamepad2
+              size={18}
+            />
+
           </div>
 
+
           <div>
+
             <strong>
               AbujaSoftlifeNG
             </strong>
@@ -1356,25 +2220,46 @@ function GameHUD({
             <span>
               {player.district}
             </span>
+
           </div>
+
         </div>
 
 
         <div className="game-stats">
 
           <div>
-            <CircleDollarSign size={15} />
-            {formatMoney(player.money)}
+
+            <CircleDollarSign
+              size={15}
+            />
+
+            {formatMoney(
+              player.money
+            )}
+
           </div>
 
+
           <div>
-            <Heart size={15} />
+
+            <Heart
+              size={15}
+            />
+
             {player.health}
+
           </div>
 
+
           <div>
-            <Sparkles size={15} />
+
+            <Sparkles
+              size={15}
+            />
+
             {player.reputation}
+
           </div>
 
         </div>
@@ -1383,13 +2268,18 @@ function GameHUD({
 
 
       {message && (
+
         <div className="game-message">
 
-          <Sparkles size={15} />
+          <Sparkles
+            size={15}
+          />
 
           {message}
 
+
           <button
+            type="button"
             onClick={() =>
               setMessage("")
             }
@@ -1398,41 +2288,62 @@ function GameHUD({
           </button>
 
         </div>
+
       )}
 
 
       <div className="game-bottom">
 
         <button
+          type="button"
           onClick={() =>
-            setScreen("profile")
+            setScreen(
+              "profile"
+            )
           }
         >
-          <User size={20} />
+
+          <User
+            size={20}
+          />
+
           <span>
             Profile
           </span>
+
         </button>
 
 
         <button
+          type="button"
           onClick={() =>
-            setScreen("actions")
+            setScreen(
+              "actions"
+            )
           }
         >
-          <Sparkles size={20} />
+
+          <Sparkles
+            size={20}
+          />
+
           <span>
             Life
           </span>
+
         </button>
 
 
         <button
+          type="button"
           className="character-button"
           onClick={() =>
-            setScreen("character")
+            setScreen(
+              "character"
+            )
           }
         >
+
           <div
             className="mini-avatar"
             style={{
@@ -1440,75 +2351,106 @@ function GameHUD({
                 character.skin_color
             }}
           >
+
             <div />
+
           </div>
+
 
           <span>
             Character
           </span>
+
         </button>
 
 
         <button
+          type="button"
           onClick={() =>
             onAction({
-              action: "rest"
+              action:
+                "rest"
             })
           }
         >
-          <Moon size={20} />
+
+          <Moon
+            size={20}
+          />
+
           <span>
             Rest
           </span>
+
         </button>
 
 
         <button
-          onClick={logout}
+          type="button"
+          onClick={
+            logout
+          }
         >
-          <LogOut size={20} />
+
+          <LogOut
+            size={20}
+          />
+
           <span>
             Exit
           </span>
+
         </button>
 
       </div>
+
     </>
   );
 }
 
 
-/* ----------------------------------------
-   PANELS
----------------------------------------- */
+/* =====================================================
+   CHARACTER PANEL
+===================================================== */
 
 function CharacterPanel({
   character,
   onSave,
   onClose
 }) {
+
   return (
     <div className="overlay">
 
       <div className="panel">
 
         <button
+          type="button"
           className="close-button"
-          onClick={onClose}
+          onClick={
+            onClose
+          }
         >
+
           <X />
+
         </button>
+
 
         <p className="eyebrow">
           YOUR CHARACTER
         </p>
 
+
         <h2>
           Customize
         </h2>
 
+
         <Customizer
+
           label="Skin"
+
           values={[
             "#4A2511",
             "#6B3517",
@@ -1517,21 +2459,51 @@ function CharacterPanel({
             "#C58B5B",
             "#E0A778"
           ]}
+
           selected={
             character.skin_color
           }
+
           onChange={(value) =>
             onSave({
-              skin_color: value
+              skin_color:
+                value
             })
           }
         />
+
+
+        <Customizer
+
+          label="Hair colour"
+
+          values={[
+            "#171717",
+            "#3B2416",
+            "#5B3925",
+            "#D4A017",
+            "#9CA3AF"
+          ]}
+
+          selected={
+            character.hair_color
+          }
+
+          onChange={(value) =>
+            onSave({
+              hair_color:
+                value
+            })
+          }
+        />
+
 
         <div className="choice-section">
 
           <span>
             Hair
           </span>
+
 
           <div className="choice-row">
 
@@ -1540,26 +2512,34 @@ function CharacterPanel({
               "fade",
               "afro",
               "long"
-            ].map((value) => (
-              <button
-                key={value}
-                className={
-                  character.hair_style ===
-                  value
-                    ? "choice active"
-                    : "choice"
-                }
+            ].map(
+              (value) => (
 
-                onClick={() =>
-                  onSave({
-                    hair_style:
-                      value
-                  })
-                }
-              >
-                {value}
-              </button>
-            ))}
+                <button
+                  type="button"
+                  key={
+                    value
+                  }
+
+                  className={
+                    character.hair_style ===
+                    value
+                      ? "choice active"
+                      : "choice"
+                  }
+
+                  onClick={() =>
+                    onSave({
+                      hair_style:
+                        value
+                    })
+                  }
+                >
+                  {value}
+                </button>
+
+              )
+            )}
 
           </div>
 
@@ -1572,35 +2552,56 @@ function CharacterPanel({
             Outfit
           </span>
 
+
           <div className="choice-row">
 
             {[
               "casual",
               "corporate",
               "street"
-            ].map((value) => (
-              <button
-                key={value}
-                className={
-                  character.outfit ===
-                  value
-                    ? "choice active"
-                    : "choice"
-                }
+            ].map(
+              (value) => (
 
-                onClick={() =>
-                  onSave({
-                    outfit: value
-                  })
-                }
-              >
-                {value}
-              </button>
-            ))}
+                <button
+                  type="button"
+                  key={
+                    value
+                  }
+
+                  className={
+                    character.outfit ===
+                    value
+                      ? "choice active"
+                      : "choice"
+                  }
+
+                  onClick={() =>
+                    onSave({
+                      outfit:
+                        value
+                    })
+                  }
+                >
+                  {value}
+                </button>
+
+              )
+            )}
 
           </div>
 
         </div>
+
+
+        <button
+          type="button"
+          className="primary-button"
+          onClick={
+            onClose
+          }
+        >
+          Done
+        </button>
 
       </div>
 
@@ -1609,26 +2610,36 @@ function CharacterPanel({
 }
 
 
+/* =====================================================
+   ACTION PANEL
+===================================================== */
+
 function ActionPanel({
   player,
   onAction,
   onClose
 }) {
+
   return (
     <div className="overlay">
 
       <div className="panel">
 
         <button
+          type="button"
           className="close-button"
-          onClick={onClose}
+          onClick={
+            onClose
+          }
         >
           <X />
         </button>
 
+
         <p className="eyebrow">
           DAILY LIFE
         </p>
+
 
         <h2>
           What are you doing?
@@ -1636,8 +2647,13 @@ function ActionPanel({
 
 
         <ActionButton
-          icon={<BriefcaseBusiness />}
+
+          icon={
+            <BriefcaseBusiness />
+          }
+
           title="Go to Work"
+
           text={
             player.job ===
             "Job Seeker"
@@ -1647,43 +2663,65 @@ function ActionPanel({
 
           onClick={() =>
             onAction({
-              action: "work"
+              action:
+                "work"
             })
           }
         />
 
 
         <ActionButton
-          icon={<ShoppingBag />}
+
+          icon={
+            <ShoppingBag />
+          }
+
           title="Eat"
+
           text="Spend ₦2,500 on food."
+
           onClick={() =>
             onAction({
-              action: "eat"
+              action:
+                "eat"
             })
           }
         />
 
 
         <ActionButton
-          icon={<Sparkles />}
+
+          icon={
+            <Sparkles />
+          }
+
           title="Socialize"
+
           text="Go out and meet people."
+
           onClick={() =>
             onAction({
-              action: "social"
+              action:
+                "social"
             })
           }
         />
 
 
         <ActionButton
-          icon={<Moon />}
+
+          icon={
+            <Moon />
+          }
+
           title="Rest"
+
           text="Recover energy."
+
           onClick={() =>
             onAction({
-              action: "rest"
+              action:
+                "rest"
             })
           }
         />
@@ -1695,22 +2733,33 @@ function ActionPanel({
 }
 
 
+/* =====================================================
+   ACTION BUTTON
+===================================================== */
+
 function ActionButton({
   icon,
   title,
   text,
   onClick
 }) {
+
   return (
     <button
+      type="button"
       className="panel-action"
-      onClick={onClick}
+      onClick={
+        onClick
+      }
     >
+
       <div>
         {icon}
       </div>
 
+
       <span>
+
         <strong>
           {title}
         </strong>
@@ -1718,37 +2767,51 @@ function ActionButton({
         <small>
           {text}
         </small>
+
       </span>
 
+
       <ChevronRight />
+
     </button>
   );
 }
 
 
+/* =====================================================
+   PROFILE PANEL
+===================================================== */
+
 function ProfilePanel({
   player,
   onClose
 }) {
+
   return (
     <div className="overlay">
 
       <div className="panel">
 
         <button
+          type="button"
           className="close-button"
-          onClick={onClose}
+          onClick={
+            onClose
+          }
         >
           <X />
         </button>
+
 
         <p className="eyebrow">
           PLAYER
         </p>
 
+
         <h2>
           {player.display_name}
         </h2>
+
 
         <div className="profile-grid">
 
@@ -1761,12 +2824,14 @@ function ProfilePanel({
             }
           />
 
+
           <Info
             label="Health"
             value={
               `${player.health}%`
             }
           />
+
 
           <Info
             label="Energy"
@@ -1775,12 +2840,14 @@ function ProfilePanel({
             }
           />
 
+
           <Info
             label="Happiness"
             value={
               `${player.happiness}%`
             }
           />
+
 
           <Info
             label="Reputation"
@@ -1789,6 +2856,7 @@ function ProfilePanel({
             }
           />
 
+
           <Info
             label="Job"
             value={
@@ -1796,12 +2864,14 @@ function ProfilePanel({
             }
           />
 
+
           <Info
             label="Home"
             value={
               player.housing
             }
           />
+
 
           <Info
             label="District"
@@ -1819,12 +2889,18 @@ function ProfilePanel({
 }
 
 
+/* =====================================================
+   INFO
+===================================================== */
+
 function Info({
   label,
   value
 }) {
+
   return (
     <div className="profile-info">
+
       <span>
         {label}
       </span>
@@ -1832,17 +2908,25 @@ function Info({
       <strong>
         {value}
       </strong>
+
     </div>
   );
 }
 
+
+/* =====================================================
+   MOUNT APP
+===================================================== */
 
 createRoot(
   document.getElementById(
     "root"
   )
 ).render(
+
   <React.StrictMode>
+
     <App />
+
   </React.StrictMode>
 );
